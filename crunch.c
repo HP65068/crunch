@@ -167,6 +167,7 @@
  *  version 3.6 fix endstring problem reported and fixed by mr.atreat@gmail.com
  *              fix a memory allocation reported and fixed by Hxcan Cai
  *              allow Makefile to detect Darwin so make will work properly reported and fixed by Marcin
+ *  version 3.7 add -k to exclude specific strings by HP65068
  *
  *  TODO: Listed in no particular order
  *         add resume support to permute (I am not sure this is possible)
@@ -247,6 +248,7 @@
 #include <string.h>
 #include <wchar.h>
 #include <ctype.h>
+#include <wctype.h>
 #include <errno.h>
 #include <signal.h>
 #include <math.h>
@@ -268,7 +270,7 @@ static const wchar_t def_low_charset[] = L"abcdefghijklmnopqrstuvwxyz";
 static const wchar_t def_upp_charset[] = L"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 static const wchar_t def_num_charset[] = L"0123456789";
 static const wchar_t def_sym_charset[] = L"!@#$%^&*()-_+=~`[]{}|\\:;\"'<>,.?/ ";
-static const char version[] = "3.6";
+static const char version[] = "3.7";
 
 static size_t inc[128];
 static size_t numofelements = 0;
@@ -297,6 +299,8 @@ Size is MAXSTRING*MB_CUR_MAX+1
 */
 static char* gconvbuffer = NULL;
 static size_t gconvlen = 0;
+
+static wchar_t *excludestring;
 
 struct thread_data{
 unsigned long long finalfilesize; /* total size of output */
@@ -329,7 +333,7 @@ struct opts_struct {
   wchar_t *startstring;
   wchar_t *endstring;
   size_t duplicates[4]; /* allowed number of duplicates for each charset */
-
+	
   size_t min, max;
 
   wchar_t *last_min;  /* last string of length min */
@@ -440,7 +444,7 @@ static size_t make_narrow_string(char *out, const wchar_t* src, size_t n) {
 size_t retval;
 
   /*
-  If global output_unicode is true, src is converted to a UTF-8 string.
+  If global output_unicode is true, src is csonverted to a UTF-8 string.
   If not, the low 8 bits are copied to the output string
   which is most definitely not what you want unless the input
   wasn't unicode in the first place.
@@ -1589,6 +1593,47 @@ pid_t pid; /*  pid and pid return */
     free(comptype);
 }
 
+static int check_repeat(const wchar_t *block2, const size_t block_len) {
+  wchar_t* excs = excludestring;
+	
+  if(wcslen(excludestring) != block_len)
+    return 0;
+  while(*excs != L'\0') {
+  	if(*excs == *block2)
+	  goto incre;
+	switch(*excs) {
+	  case L'@':
+		if(iswlower(*block2))
+			goto incre;
+		else
+			return 0;
+	  case L',':
+		if(iswupper(*block2))
+			goto incre;
+		else
+			return 0;
+	  case L'%':
+		if(iswdigit(*block2))
+			goto incre;
+		else
+			return 0;
+	  case L'^':
+		if(wcschr(def_sym_charset, *block2) != NULL)
+			goto incre;
+		else
+			return 0;
+	  default:
+			return 0;
+	}
+	
+	  	  
+	incre:
+	  excs ++;
+	  block2 ++;
+  }
+	
+  return 1;
+}
 
 static void printpermutepattern(const wchar_t *block2, const wchar_t *pattern, const wchar_t *literalstring, wchar_t **wordarray) {
 size_t j, t;
@@ -2030,18 +2075,19 @@ size_t outlen; /* temp for size of narrow output string */
       loadstring(block2, j, startblock, options);
     }
     startblock = NULL;
-
+	  
+	  
     if (outputfilename == NULL) { /* user wants to display words on screen */
       if (options.endstring == NULL) {
         while ((!finished(block2,options) && !ctrlbreak) && (my_thread.linecounter < (linecount-1))) {
-          if (!too_many_duplicates(block2, options)) {
+          if (!too_many_duplicates(block2, options) && !check_repeat(block2, wcslen(block2))) {
             (void)make_narrow_string(gconvbuffer,block2,gconvlen);
             fprintf(fptr, "%s\n", gconvbuffer);
             my_thread.linecounter++;
           }
           increment(block2, options);
         }
-        if (!too_many_duplicates(block2, options)) { /*flush last word */
+        if (!too_many_duplicates(block2, options) && !check_repeat(block2, wcslen(block2))) { /*flush last word */
           (void)make_narrow_string(gconvbuffer,block2,gconvlen);
           fprintf(fptr, "%s\n", gconvbuffer);
         }
@@ -2051,14 +2097,14 @@ size_t outlen; /* temp for size of narrow output string */
       }
       else {
         while (!finished(block2,options) && !ctrlbreak && (wcsncmp(block2,options.endstring,wcslen(options.endstring)) != 0) ) {
-          if (!too_many_duplicates(block2, options)) {
+          if (!too_many_duplicates(block2, options) && !check_repeat(block2, wcslen(block2))) {
             (void)make_narrow_string(gconvbuffer,block2,gconvlen);
             fprintf(fptr, "%s\n", gconvbuffer);
             my_thread.linecounter++;
           }
           increment(block2, options);
         }
-        if (!too_many_duplicates(block2, options)) { /*flush last word */
+        if (!too_many_duplicates(block2, options) && !check_repeat(block2, wcslen(block2))) { /*flush last word */
           (void)make_narrow_string(gconvbuffer,block2,gconvlen);
           fprintf(fptr, "%s\n", gconvbuffer);
         }
@@ -2080,7 +2126,7 @@ size_t outlen; /* temp for size of narrow output string */
           outlen = make_narrow_string(gconvbuffer,block2,gconvlen);
 
           if ((my_thread.linecounter <= (linecount-1)) && (my_thread.bytecounter <= (bytecount - outlen))) { /* not time to create a new file */
-            if (!too_many_duplicates(block2, options)) {
+            if (!too_many_duplicates(block2, options) && !check_repeat(block2, wcslen(block2))) {
               fprintf(fptr, "%s\n", gconvbuffer);
               if (ferror(fptr) != 0) {
                 fprintf(stderr,"chunk1: fprintf failed = %d\n", errno);
@@ -2722,6 +2768,20 @@ pthread_t threads;
       inverted = 1;
       i--; /* decrease by 1 since -i has no parameter value */
     }
+	  
+	if (strncmp(argv[i], "-k", 2) == 0) { /* user wants to skip some sorts of permution */
+	  if (i+1 < argc && argv[i+1] != NULL) {
+	  	if(strlen(argv[i+1]) > max || strlen(argv[i+1]) < min) {
+			fprintf(stderr, "Please adjust your parameter to the same length of your specified length.\n");
+			exit(EXIT_FAILURE);
+		}
+		excludestring = alloc_wide_string(argv[i+1],&saw_unicode_input);
+	  }
+	  else {
+		  fprintf(stderr, "Please specify a permution after -k \n");
+		  exit(EXIT_FAILURE);
+	  }
+	}
 
     if (strncmp(argv[i], "-l", 2) == 0) { /* user wants to list literal characters */
       if (i+1 < argc) {
