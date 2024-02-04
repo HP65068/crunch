@@ -444,7 +444,7 @@ static size_t make_narrow_string(char *out, const wchar_t* src, size_t n) {
 size_t retval;
 
   /*
-  If global output_unicode is true, src is csonverted to a UTF-8 string.
+  If global output_unicode is true, src is converted to a UTF-8 string.
   If not, the low 8 bits are copied to the output string
   which is most definitely not what you want unless the input
   wasn't unicode in the first place.
